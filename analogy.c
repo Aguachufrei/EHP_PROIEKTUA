@@ -61,6 +61,12 @@ void perform_analogy(float *words, int idx1, int idx2, int idx3, float *result_v
 	  result_vector = word1_vector - word2_vector + word3_vector
 	  OSATZEKO - PARA COMPLETAR
 	 *****************************************************************/
+	float *vector1 = &words[idx1 * EMB_SIZE];
+	float *vector2 = &words[idx2 * EMB_SIZE];
+	float *vector3 = &words[idx3 * EMB_SIZE];
+	for (int i = 0; i < EMB_SIZE; i++) {
+		result_vector[i] = vector1[i] - vector2[i] + vector3[i];
+	}
 } 
 
 // Lortutako bektorearen gertukoen hitza bilatzeko funtzioa 
@@ -70,6 +76,30 @@ void find_closest_word(float *result_vector, float *words, int numwords, int idx
 	  OSATZEKO - PARA COMPLETAR
 	  find closest word using cosine_similarity function
 	 ********************************************************/
+	*max_similarity = -1.0;
+	*closest_word_idx = -1;
+	float result_mag = magnitude(result_vector, EMB_SIZE);
+	for (int i = 0; i < numwords; i++) {
+		if (i == idx1 || i == idx2 || i == idx3) {
+			continue;
+		}
+
+		float *current_word_vector = &words[i * EMB_SIZE];
+		float current_mag = magnitude(current_word_vector, EMB_SIZE);
+
+		float similarity;
+		//Ezin da zati 0 egin, hori ez egiteko hurrengo konprobazioa egiten da.
+		if (result_mag > 0.0 && current_mag > 0.0) {
+			similarity = dot_product(result_vector, current_word_vector, EMB_SIZE) / (result_mag * current_mag);
+		} else {
+			similarity = -2.0;
+		}
+
+		if (similarity > *max_similarity) {
+			*max_similarity = similarity;
+			*closest_word_idx = i;
+		}
+	}
 }
 
 
