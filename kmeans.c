@@ -64,6 +64,12 @@ double word_distance (float *word1, float *word2)
     /****************************************************************************************
       OSATZEKO - PARA COMPLETAR
     ****************************************************************************************/
+    double dist_sq = 0.0;
+    for (int i = 0; i < EMB_SIZE; i++) {
+      double diff = (double)word1[i] - (double)word2[i];
+      dist_sq += diff * diff;
+    }
+    return sqrt(dist_sq);
 }
 
 // Zentroideen hasierako balioak ausaz -- Inicializar centroides aleatoriamente
@@ -114,6 +120,32 @@ void k_means_calculate(float *words, int numwords, int dim, int numclusters, int
            - Hitz bakoitzari cluster gertukoena esleitu cosine_similarity funtzioan oinarrituta
            - Asignar cada palabra al cluster más cercano basandose en la función cosine_similarity       
 ****************************************************************************************/
+  int i, j;
+
+  *changed = 0;
+
+  for (i = 0; i < numwords; i++) {
+    float max_similarity = -1;
+    int closest_centroid = -1;
+    float *word_vector = &words[i * dim];
+
+    for (j = 0; j < numclusters; j++) {
+      float *centroid_vector = &centroids[j * dim];
+
+      float similarity = cosine_similarity(word_vector, centroid_vector, dim);
+
+      if (similarity > max_similarity) {
+        max_similarity = similarity;
+        closest_centroid = j;
+      }
+    }
+
+    if (wordcent[i] != closest_centroid) {
+      wordcent[i] = closest_centroid;
+      *changed = 1;
+    }
+  }
+
 }
 
 double cluster_homogeneity(float *words, struct clusterinfo *members, int i, int numclusters, int number)
@@ -124,6 +156,19 @@ double cluster_homogeneity(float *words, struct clusterinfo *members, int i, int
        Cluster bakoitzean, hitz bikote guztien arteko distantziak - En cada cluster, las distancias entre todos los pares de elementos
        Adi, i-j neurtuta, ez da gero j-i neurtu behar  / Ojo, una vez calculado el par i-j no hay que calcular el j-i
     ****************************************************************************************/
+    double disbat = 0.0;
+    for (int k = 0; k < number; k++) {
+      int word1_index = members[i].elements[k];
+      float *word1 = &words[word1_index * EMB_SIZE];
+
+      for (int l = k + 1; l < number; l++) {
+        int word2_index = members[i].elements[l];
+        float *word2 = &words[word2_index * EMB_SIZE];
+
+        disbat += word_distance(word1, word2);
+      }
+    }
+    return disbat;
 }
 
 double centroid_homogeneity(float *centroids, int i, int numclusters)
@@ -131,6 +176,15 @@ double centroid_homogeneity(float *centroids, int i, int numclusters)
     /****************************************************************************************
       OSATZEKO - PARA COMPLETAR
     ****************************************************************************************/
+    double disbat = 0.0;
+    float *centroid_i = &centroids[i * EMB_SIZE];
+    for (int j = 0; j < numclusters; j++) {
+      if (i != j) {
+        float *centroid_j = &centroids[j * EMB_SIZE];
+        disbat += word_distance(centroid_i, centroid_j);
+      }
+    }
+    return disbat;
 }
 
 
@@ -171,6 +225,12 @@ double validation (float *words, struct clusterinfo *members, float *centroids, 
       OSATZEKO - PARA COMPLETAR
       fmaxf: max of 2 floats --> maximoa kalkulatzeko -- para calcular el máximo
     ****************************************************************************************/
+  cvi = 0.0;
+  for(int i=0; i<numclusters;i++){
+    max=fmax(cent_homog[i], clust_homog[i]);
+    cvi +=(cent_homog[i] - clust_homog[i])/max;
+  }
+  cvi=cvi/numclusters;
   return (cvi);
 }
 
@@ -259,7 +319,7 @@ int main(int argc, char *argv[])
       OSATZEKO - PARA COMPLETAR
        deitu k_means_calculate funtzioari -- llamar a la función k_means_calculate
     ****************************************************************************************/
-      if (changed==0) break; // Aldaketarik ez bada egon, atera -- Si no hay cambios, salir
+      k_means_calculate(words, numwords, EMB_SIZE, numclusters, wordcent, centroids, &changed);
       update_centroids(words, centroids, wordcent, numwords, numclusters, EMB_SIZE, cluster_sizes);
     }  
 
@@ -283,8 +343,17 @@ int main(int argc, char *argv[])
    	if (cvi appropriate) end classification;
         else  continue classification;	
     ****************************************************************************************/
+    cvi = validation(words, members, centroids, numclusters);
+    printf("cvi = %f eta numclusters = %d\n", cvi, numclusters);
+
+    dif = cvi - cvi_zaharra;
+    if (dif < DELTA && numclusters > K) {
+      end_classif = 1;
+    } else {
+      cvi_zaharra = cvi;
+      numclusters += 10;
     }
-  } 
+  }
     
   clock_gettime (CLOCK_REALTIME, &t1);
 /******************************************************************/
