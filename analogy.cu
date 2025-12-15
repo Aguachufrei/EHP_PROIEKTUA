@@ -1,7 +1,8 @@
 // KONPILATZEKO - PARA COMPILAR: (C: -lm) (CUDA: -arch=sm_61)
-// EXEC: analogy embeddings.dat dictionary.dat 
+// EXEC: analogy embeddings.dat dictionary.dat
 // Ej., king – man + woman = queen
 
+#include <cmath>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -11,10 +12,10 @@
 #define VOCAB_SIZE 10000     // Hitz kopuru maximoa -- Maximo num. de palabras
 #define EMB_SIZE 50  	     // Embedding-en kopurua hitzeko -- Nº de embedding-s por palabra
 #define TAM 25		     // Hiztegiko hitzen tamaina maximoa -- Tamaño maximo del diccionario
-
+#define BLTAM 128
 
 // Hitz baten indizea kalkulatzeko funtzioa
-// Función para calcular el indice de una palabra 
+// Función para calcular el indice de una palabra
 int word2ind(char* word, char** dictionary, int numwords) {
 	for (int i = 0; i < numwords; i++) {
 		if (strcmp(word, dictionary[i]) == 0) {
@@ -56,20 +57,20 @@ float cosine_similarity(float* vec1, float* vec2, int size) {
 
 // Analogia kalkulatzeko funtzioa
 // Función para calcular la analogía
-void perform_analogy(float *words, int idx1, int idx2, int idx3, float *result_vector) {
+__global__ void perform_analogy(float *words, int idx1, int idx2, int idx3, float *result_vector) {
 	/*****************************************************************
 	  result_vector = word1_vector - word2_vector + word3_vector
 	  OSATZEKO - PARA COMPLETAR
 	 *****************************************************************/
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    
 	float *vector1 = &words[idx1 * EMB_SIZE];
 	float *vector2 = &words[idx2 * EMB_SIZE];
 	float *vector3 = &words[idx3 * EMB_SIZE];
-	for (int i = 0; i < EMB_SIZE; i++) {
-		result_vector[i] = vector1[i] - vector2[i] + vector3[i];
-	}
-} 
+    result_vector[i] = vector1[i] - vector2[i] + vector3[i];
+}
 
-// Lortutako bektorearen gertukoen hitza bilatzeko funtzioa 
+// Lortutako bektorearen gertukoen hitza bilatzeko funtzioa
 // Función para encontrar la palabra más cercana al vector resultante
 void find_closest_word(float *result_vector, float *words, int numwords, int idx1, int idx2, int idx3, int *closest_word_idx, float *max_similarity) {
 	/*******************************************************
@@ -103,14 +104,14 @@ void find_closest_word(float *result_vector, float *words, int numwords, int idx
 }
 
 
-int main(int argc, char *argv[]) 
+int main(int argc, char *argv[])
 {
 	int		i, j, numwords, idx1, idx2, idx3;
 	int 	closest_word_idx;
 	float	max_similarity;
 	float 	*words;
 	FILE    	*f1, *f2;
-	char 	**dictionary;  
+	char 	**dictionary;
 	char	target_word1[TAM], target_word2[TAM], target_word3[TAM];
 	float	*result_vector;
 	float	*sim_cosine;
@@ -122,11 +123,11 @@ int main(int argc, char *argv[])
 	if (argc < 3) {
 		printf("Deia: analogia embedding_fitx hiztegi_fitx\n");
 		exit (-1);;
-	}  
+	}
 
 
 	// Irakurri datuak sarrea-fitxategietatik
-	// ====================================== 
+	// ======================================
 	f1 = fopen (argv[1], "r");
 	if (f1 == NULL) {
 		printf ("Errorea %s fitxategia irekitzean\n", argv[1]);
@@ -141,7 +142,7 @@ int main(int argc, char *argv[])
 
 
 	fscanf (f1, "%d", &numwords);	       // prozesatu behar den hitz kopurua fitxategitik jaso
-	if (argc == 4) numwords = atoi (argv[3]);   // 3. parametroa = prozesatu behar diren hitzen kopurua  
+	if (argc == 4) numwords = atoi (argv[3]);   // 3. parametroa = prozesatu behar diren hitzen kopurua
 	printf ("numwords = %d\n", numwords);
 
 	words = (float*)malloc (numwords*EMB_SIZE*sizeof(float));
@@ -165,7 +166,7 @@ int main(int argc, char *argv[])
 	/*********************************************************************
 	  OSATZEKO - PARA COMPLETAR
 	  Sartutako hitzen indizeak kalkulatu (idx1, idx2 & idx3) word2ind funtzioa erabilita
-	  Calcular los indices de las palabras introducidas (idx1, idx2 & idx3) con la funcion word2ind     
+	  Calcular los indices de las palabras introducidas (idx1, idx2 & idx3) con la funcion word2ind
 	 **********************************************************************/
 	idx1 = word2ind(target_word1, dictionary, numwords);
 	idx2 = word2ind(target_word2, dictionary, numwords);
@@ -179,12 +180,26 @@ int main(int argc, char *argv[])
 	/***************************************************/
 	//    OSATZEKO - PARA COMPLETAR
 	//     1. call perform_analogy function
-	//     2. call find_closest_word function   
-	/***************************************************/  
-	perform_analogy(words, idx1, idx2, idx3, result_vector);
+	//     2. call find_closest_word function
+	/***************************************************/
+
+
+	int blkop = floor(EMB_SIZE/BLTAM);
+    float *d_words, *d_result_vector;
+	cudaMalloc(&d_words, numwords*EMB_SIZE*sizeof(float));
+	cudaMalloc(&d_result_vector, EMB_SIZE*sizeof(float));
+	cudaMemcpy(d_words, words, numwords*EMB_SIZE*sizeof(float), cudaMemcpyHostToDevice);
+    
+    perform_analogy<<<blkop, BLTAM>>>(d_words, idx1, idx2, idx3, d_result_vector);
+
+    cudaMemcpy(result_vector, d_result_vector, EMB_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(d_words);
+    cudaFree(d_result_vector);
+    
+
 	find_closest_word(result_vector, words, numwords, idx1, idx2, idx3, &closest_word_idx, &max_similarity);
-	
-	clock_gettime (CLOCK_REALTIME, &t1);   
+
+	clock_gettime (CLOCK_REALTIME, &t1);
 
 	if (closest_word_idx != -1) {
 		printf("\nClosest_word: %s (%d), sim = %f \n", dictionary[closest_word_idx],closest_word_idx, max_similarity);
@@ -201,8 +216,7 @@ int main(int argc, char *argv[])
 	free(sim_cosine);
 	free(result_vector);
 	for (i=0; i<numwords;i++) free (dictionary[i]);
-	free(dictionary); 
+	free(dictionary);
 
 	return 0;
 }
-
