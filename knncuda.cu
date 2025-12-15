@@ -114,7 +114,7 @@ int main(int argc, char *argv[])
    }
   }
   // Bektoreen tamainak bytetan
-  size_t words_size = numwords * emb_size * sizeof(float);
+  size_t words_size = numwords * EMB_SIZE * sizeof(float);
   size_t similarities_size = numwords * numwords * sizeof(float);
 
   cudaMalloc((void**)&d_words, words_size);
