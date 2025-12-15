@@ -56,11 +56,11 @@ __global__ void knn_complet(float *words, int numwords, float *similarities) {
     //    OSATZEKO - PARA COMPLETAR
 ******************************************************************/
   if(i<numwords){
-    float *vec_i = &words[i/numwords * EMB_SIZE];
+    float *vec_i = &words[i * EMB_SIZE];
     for (int j = 0; j < numwords; j++) {
-      float *vec_j = &words[i%numwords * EMB_SIZE];
+      float *vec_j = &words[j * EMB_SIZE];
       float sim = cosine_similarity(vec_i, vec_j, EMB_SIZE);
-      similarities[i] = sim;
+      similarities[i * numwords + j] = sim;
     }
   }
 }
@@ -69,7 +69,7 @@ __global__ void knn_complet(float *words, int numwords, float *similarities) {
 
 int main(int argc, char *argv[]) 
 {
-    int		i, j, numwords, row, col;
+    int		i, j, numwords;
     float 	*words;
     FILE    	*f1, *f2;
     float 	*similarities;
