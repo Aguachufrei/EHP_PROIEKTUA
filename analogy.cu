@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
 	/***************************************************/
 
 
-	int blkop = floor(EMB_SIZE/BLTAM);
+	int blkop = EMB_SIZE/BLTAM+((EMB_SIZE%BLTAM)==0?0:1);
     float *d_words, *d_result_vector;
 	cudaMalloc(&d_words, numwords*EMB_SIZE*sizeof(float));
 	cudaMalloc(&d_result_vector, EMB_SIZE*sizeof(float));
