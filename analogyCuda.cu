@@ -109,7 +109,7 @@ __global__ void magnitude_array(float *d_words, int size, float *d_magnitude){
 	
 	//Biderketa kalkulatzen da bakarrik matrizearen barruan bagaude.
 	float balioa = 0.0;
-	if(tid<size){
+	if(idx<size){
 		balioa = d_words[idx] * d_words[idx];
 	}
 	temp[tid] = balioa;	
@@ -307,9 +307,13 @@ int main(int argc, char *argv[])
 	perform_analogy<<<blkop, BLTAM>>>(d_words, idx1, idx2, idx3, d_result_vector);
 
 	cudaMemcpy(result_vector, d_result_vector, EMB_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
+	
+	cudaFree(d_words);
+	cudaFree(d_result_vector);
 
 
-	find_closest_word(d_result_vector, d_words, numwords, idx1, idx2, idx3, &closest_word_idx, &max_similarity);
+	//find_closest_word
+	find_closest_word(result_vector, words, numwords, idx1, idx2, idx3, &closest_word_idx, &max_similarity);
 
 	clock_gettime (CLOCK_REALTIME, &t1);
 
