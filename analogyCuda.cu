@@ -104,20 +104,21 @@ void find_closest_word(float *result_vector, float *words, int numwords, int idx
 
 __global__ void magnitude_array(float *d_words, int size, float *d_magnitude){
 	extern __shared__ float temp[];
-	int idx = blockIdx.x*blockDim.x + threadIdx.x;
+	int idx = blockIdx.x * size + threadIdx.x; //size<blockdim, blokearen parte bat ez da erabiltzen
+	int wdx = blockIdx.x; //hitz baten bektorea BLTAM>size izan behar da
 	int tid = threadIdx.x;
 	
 	//Biderketa kalkulatzen da bakarrik matrizearen barruan bagaude.
 	float balioa = 0.0;
-	if(idx<size){
+	if(tid < size){
 		balioa = d_words[idx] * d_words[idx];
 	}
-	temp[tid] = balioa;	
+	temp[tid] = balioa;
 	__syncthreads();
 
 	//Redukzioa
 	for (int stride = 1; stride < blockDim.x; stride *= 2) {
-    		if ((tid % (2*stride)) == 0 && tid + stride < blockDim.x){
+    		if ((tid % (2*stride)) == 0 && (tid + stride) < size){
         		temp[tid] += temp[tid + stride];
 		}
     		__syncthreads();
@@ -125,7 +126,7 @@ __global__ void magnitude_array(float *d_words, int size, float *d_magnitude){
 	
 	//Idazketa
 	if (tid == 0) {
-    		d_magnitude[blockIdx.x] = sqrt(temp[0]);
+    		d_magnitude[wdx] = sqrt(temp[0]);
 	}
 
 
@@ -176,7 +177,8 @@ void find_closest_word(
 	cudaMalloc(&d_magnitudes, numwords * sizeof(float));
 	cudaMalloc(&d_similarities, numwords * sizeof(float));
 	cudaMalloc(&d_result_vector, EMB_SIZE * sizeof(float));
-	cudaMemcpy(d_words, words, EMB_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+
+	cudaMemcpy(d_words, words, numwords * EMB_SIZE * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_result_vector, result_vector, EMB_SIZE * sizeof(float), cudaMemcpyHostToDevice);
 
 	int blkop = numwords;
@@ -184,7 +186,6 @@ void find_closest_word(
 	//magnitudeak pre-kalkulatzen dira eta d_magnitudes-en uzten da
 	magnitude_array<<<blkop, BLTAM, BLTAM * sizeof(float)>>>(d_words, EMB_SIZE, d_magnitudes);
 	cudaDeviceSynchronize();
-ir
 	float result_magnitude = magnitude(result_vector, EMB_SIZE); 
 
 	find_similarities<<<blkop, BLTAM>>>(
