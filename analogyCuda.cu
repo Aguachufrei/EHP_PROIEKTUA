@@ -150,7 +150,7 @@ __global__ void find_similarities(
 	for (int i = 0; i<size; i++){
 		dotp += result_vector[i] * current_word_vector[i];
 	}
-
+	
 	float current_magnitude = magnitudes[idx];
 
 	if(result_magnitude > 0 && current_magnitude > 0){
@@ -181,9 +181,10 @@ void find_closest_word(
 
 	int blkop = numwords;
 
+	//magnitudeak pre-kalkulatzen dira eta d_magnitudes-en uzten da
 	magnitude_array<<<blkop, BLTAM, BLTAM * sizeof(float)>>>(d_words, EMB_SIZE, d_magnitudes);
 	cudaDeviceSynchronize();
-
+ir
 	float result_magnitude = magnitude(result_vector, EMB_SIZE); 
 
 	find_similarities<<<blkop, BLTAM>>>(
@@ -223,12 +224,12 @@ int main(int argc, char *argv[])
 	int		i, j, numwords, idx1, idx2, idx3;
 	int 	closest_word_idx;
 	float	max_similarity;
-	float 	*words;
+	float 	*words; //numwords * EMB_SIZE
 	FILE    	*f1, *f2;
-	char 	**dictionary;
+	char 	**dictionary; //numwords
 	char	target_word1[TAM], target_word2[TAM], target_word3[TAM];
-	float	*result_vector;
-	float	*sim_cosine;
+	float	*result_vector; //EMB_SIZE
+	float	*sim_cosine; //numwords
 
 	struct timespec  t0, t1;
 	double tej;
