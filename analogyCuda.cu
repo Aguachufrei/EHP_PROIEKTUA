@@ -292,13 +292,11 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	clock_gettime (CLOCK_REALTIME, &t0);
 	/***************************************************/
 	//    OSATZEKO - PARA COMPLETAR
 	//     1. call perform_analogy function
 	//     2. call find_closest_word function
 	/***************************************************/
-
 
 	int blkop = EMB_SIZE/BLTAM+((EMB_SIZE%BLTAM)==0?0:1);
 	float *d_words, *d_result_vector;
@@ -306,18 +304,18 @@ int main(int argc, char *argv[])
 	cudaMalloc(&d_result_vector, EMB_SIZE*sizeof(float));
 	cudaMemcpy(d_words, words, numwords*EMB_SIZE*sizeof(float), cudaMemcpyHostToDevice);
 
+	clock_gettime (CLOCK_REALTIME, &t0);
 	perform_analogy<<<blkop, BLTAM>>>(d_words, idx1, idx2, idx3, d_result_vector);
 
 	cudaMemcpy(result_vector, d_result_vector, EMB_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
-	
-	cudaFree(d_words);
-	cudaFree(d_result_vector);
-
 
 	//find_closest_word
 	find_closest_word(result_vector, words, numwords, idx1, idx2, idx3, &closest_word_idx, &max_similarity);
 
 	clock_gettime (CLOCK_REALTIME, &t1);
+	cudaFree(d_words);
+	cudaFree(d_result_vector);
+
 
 	if (closest_word_idx != -1) {
 		printf("\nClosest_word: %s (%d), sim = %f \n", dictionary[closest_word_idx],closest_word_idx, max_similarity);
