@@ -121,6 +121,7 @@ void update_centroids(float *words, float *centroids, int *wordcent, int numword
 	}
 }
 
+
 // K-Means funtzio nagusia -- Función principal de K-Means
 void k_means_calculate(float *words, int numwords, int dim, int numclusters, int *wordcent, float *centroids, int *changed) 
 {  
@@ -170,30 +171,29 @@ __global__ void k_means_calculate_kernel(
 {
     extern __shared__ float shared_centroids[]; // dim * numclusters
 
-    int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int tx = threadIdx.x;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    for (int j = tx; j < numclusters * dim; j += blockDim.x) {
-        shared_centroids[j] = centroids[j];
+    for (int i = threadIdx.x; i < numclusters * dim; i += blockDim.x) {
+        shared_centroids[i] = centroids[i];
     }
     __syncthreads();
 
-    if (tid < numwords) {
-        float *word_vec = &words[tid * dim];
-        float max_similarity = -1.0f;
+    if (idx < numwords) {
+        float *word_vec = &words[idx * dim];
+        float max_similarity = -1.0;
         int closest = -1;
 
-        for (int j = 0; j < numclusters; ++j) {
-            float *cent_vec = &shared_centroids[j * dim];
-            float sim = cosine_similarity_device(word_vec, cent_vec, norm_words[tid], norm_centroids[j], dim);
+        for (int i = 0; i < numclusters; i++) {
+            float *cent_vec = &shared_centroids[i * dim];
+            float sim = cosine_similarity_device(word_vec, cent_vec, norm_words[idx], norm_centroids[i], dim);
             if (sim > max_similarity) {
                 max_similarity = sim;
-                closest = j;
+                closest = i;
             }
         }
 
-        if (wordcent[tid] != closest) {
-            wordcent[tid] = closest;
+        if (wordcent[idx] != closest) {
+            wordcent[idx] = closest;
             atomicOr(changed, 1);
         }
     }
@@ -215,34 +215,37 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 	cudaMemcpy(d_centroids, centroids, numclusters * dim * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_wordcent, wordcent, numwords * sizeof(int), cudaMemcpyHostToDevice);
 
-	float *norm_words = (float*)malloc(numwords * sizeof(float));
-	float *norm_centroids = (float*)malloc(numclusters * sizeof(float));
+	float *pre_words = (float*)malloc(numwords * sizeof(float));
+	float *pre_centroids = (float*)malloc(numclusters * sizeof(float));
 
+	//prekalkulatu hitzen centroide gertuenak cpuan momentuz.	
 	for (int i = 0; i < numwords; i++) {
 		float sum = 0;
 		for (int j = 0; j < dim; j++) sum += words[i*dim + j] * words[i*dim + j];
-		norm_words[i] = sqrtf(sum);
+			norm_words[i] = sqrtf(sum);
 	}
+
 	for (int i = 0; i < numclusters; i++) {
 		float sum = 0;
 		for (int j = 0; j < dim; j++) sum += centroids[i*dim + j] * centroids[i*dim + j];
-		norm_centroids[i] = sqrtf(sum);
+			norm_centroids[i] = sqrtf(sum);
 	}
+	
 	cudaMemcpy(d_norm_words, norm_words, numwords * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_norm_centroids, norm_centroids, numclusters * sizeof(float), cudaMemcpyHostToDevice);
 
-	int blockSize = 256;
-	int gridSize = (numwords + blockSize - 1) / blockSize;
-	int sharedMemSize = numclusters * dim * sizeof(float);
-	int changed = 0;
-	cudaMemcpy(d_changed, &changed, sizeof(int), cudaMemcpyHostToDevice);
+	int blkop = 256;//aldatu daiteke
+	int bltam = (numwords + blkop - 1) / blkop; //borobilketa 
+	int size = numclusters * dim * sizeof(float);
+	*changed = 0;
+	cudaMemcpy(d_changed, changed, sizeof(int), cudaMemcpyHostToDevice);
 
-	k_means_calculate_kernel<<<gridSize, blockSize, sharedMemSize>>>(
+	k_means_calculate_kernel<<<bltam, blkop, size>>>(
 			d_words, numwords, dim, numclusters, d_centroids,
 			d_norm_words, d_norm_centroids, d_wordcent, d_changed
 			);
 	cudaMemcpy(wordcent, d_wordcent, numwords * sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(&changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost);
 
 	cudaFree(d_words);
 	cudaFree(d_centroids);
@@ -250,8 +253,8 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 	cudaFree(d_norm_words);
 	cudaFree(d_norm_centroids);
 	cudaFree(d_changed);
-	free(h_norm_words);
-	free(h_norm_centroids);
+	free(norm_words);
+	free(norm_centroids);
 }
 
 
