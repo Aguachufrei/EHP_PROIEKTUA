@@ -201,14 +201,14 @@ __global__ void k_means_calculate_kernel(
 
 
 void k_means_calculate_host(float *words, int numwords, int dim, int numclusters, int *wordcent, float *centroids, int *changed){  
-	float *d_words, *d_centroids, *d_norm_words, *d_norm_centroids;
+	float *d_words, *d_centroids, *d_pre_words, *d_pre_centroids;
 	int *d_wordcent, *d_changed;
 
 	cudaMalloc(&d_words, numwords * dim * sizeof(float));
 	cudaMalloc(&d_centroids, numclusters * dim * sizeof(float));
 	cudaMalloc(&d_wordcent, numwords * sizeof(int));
-	cudaMalloc(&d_norm_words, numwords * sizeof(float));
-	cudaMalloc(&d_norm_centroids, numclusters * sizeof(float));
+	cudaMalloc(&d_pre_words, numwords * sizeof(float));
+	cudaMalloc(&d_pre_centroids, numclusters * sizeof(float));
 	cudaMalloc(&d_changed, sizeof(int));
 
 	cudaMemcpy(d_words, words, numwords * dim * sizeof(float), cudaMemcpyHostToDevice);
@@ -222,17 +222,17 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 	for (int i = 0; i < numwords; i++) {
 		float sum = 0;
 		for (int j = 0; j < dim; j++) sum += words[i*dim + j] * words[i*dim + j];
-			norm_words[i] = sqrtf(sum);
+			pre_words[i] = sqrtf(sum);
 	}
 
 	for (int i = 0; i < numclusters; i++) {
 		float sum = 0;
 		for (int j = 0; j < dim; j++) sum += centroids[i*dim + j] * centroids[i*dim + j];
-			norm_centroids[i] = sqrtf(sum);
+			pre_centroids[i] = sqrtf(sum);
 	}
 	
-	cudaMemcpy(d_norm_words, norm_words, numwords * sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_norm_centroids, norm_centroids, numclusters * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_pre_words, pre_words, numwords * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_pre_centroids, pre_centroids, numclusters * sizeof(float), cudaMemcpyHostToDevice);
 
 	int blkop = 256;//aldatu daiteke
 	int bltam = (numwords + blkop - 1) / blkop; //borobilketa 
@@ -242,7 +242,7 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 
 	k_means_calculate_kernel<<<bltam, blkop, size>>>(
 			d_words, numwords, dim, numclusters, d_centroids,
-			d_norm_words, d_norm_centroids, d_wordcent, d_changed
+			d_pre_words, d_pre_centroids, d_wordcent, d_changed
 			);
 	cudaMemcpy(wordcent, d_wordcent, numwords * sizeof(int), cudaMemcpyDeviceToHost);
 	cudaMemcpy(changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost);
@@ -250,11 +250,11 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 	cudaFree(d_words);
 	cudaFree(d_centroids);
 	cudaFree(d_wordcent);
-	cudaFree(d_norm_words);
-	cudaFree(d_norm_centroids);
+	cudaFree(d_pre_words);
+	cudaFree(d_pre_centroids);
 	cudaFree(d_changed);
-	free(norm_words);
-	free(norm_centroids);
+	free(pre_words);
+	free(pre_centroids);
 }
 
 
