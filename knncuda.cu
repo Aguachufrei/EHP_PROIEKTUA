@@ -47,15 +47,10 @@ __device__ float cosine_similarity(float* vec1, float* vec2, int size) {
 
 // kNN hitz guztietarako -- kNN para todas las palabras
 __global__ void knn_complet(float *words, int numwords, float *similarities) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-    
-/******************************************************************
-    // Hitz bakoitzak beste guztien duen antzekotasuna kalkulatu 
-    // Calcula la similitud de cada palabra con todas las demas
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = blockDim.x * gridDim.x;
 
-    //    OSATZEKO - PARA COMPLETAR
-******************************************************************/
-  if(i<numwords){
+  for (int i = idx; i < numwords; i += stride) {
     float *vec_i = &words[i * EMB_SIZE];
     for (int j = 0; j < numwords; j++) {
       float *vec_j = &words[j * EMB_SIZE];
@@ -126,7 +121,7 @@ int main(int argc, char *argv[])
   printf ("Embeddingak irakurrita\n");
 
   //Bloke kopurua kalkulatu
-  int BLKOP = (numwords + BLTAM - 1) / BLTAM;
+  int BLKOP = numwords;
   
   printf("Hitz guztien auzokideak kalkulatzera zoaz\n");
   clock_gettime (CLOCK_REALTIME, &t0);
