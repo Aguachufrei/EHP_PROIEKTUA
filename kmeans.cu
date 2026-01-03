@@ -383,11 +383,16 @@ double validation_paraleloan(float *words, struct clusterinfo *members, float *c
 	cudaMemcpy(d_centroids, centroids, numclusters * EMB_SIZE * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_members, members, numclusters * sizeof(struct clusterinfo), cudaMemcpyHostToDevice);
 
-	cluster_homogeneity_kernel<<<numclusters, 256>>>(d_words, d_members, d_clust_homog);
 
-	int blkop = 64;
-	int bltam = (numclusters + blkop - 1) / blkop;
-	centroid_homogeneity_kernel<<<bltam, blkop>>>(d_centroids, d_cent_homog, numclusters);
+	int bltam_cluster = 256;
+	int blkop_cluster = numclusters;
+
+	cluster_homogeneity_kernel<<<blkop_cluster, bltam_cluster>>>(d_words, d_members, d_clust_homog);
+
+	int bltam = 128;
+	int blkop = (numclusters + bltam - 1) / bltam;
+
+	centroid_homogeneity_kernel<<<blkop, bltam>>>(d_centroids, d_cent_homog, numclusters);
 
 	cudaMemcpy(h_clust_homog, d_clust_homog, numclusters * sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_cent_homog, d_cent_homog, numclusters * sizeof(double), cudaMemcpyDeviceToHost);
