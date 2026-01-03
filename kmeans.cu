@@ -68,13 +68,9 @@ __device__ float cosine_similarity_device(float *a, float *b, float norm_a, floa
 // Distantzia euklidearra: bi hitzen kenketa ber bi, eta atera erro karratua
 // Distancia euclidea: raiz cuadrada de la resta de dos palabras elevada al cuadrado
 // Adi: double
-double word_distance (float *word1, float *word2)
-{
-	/****************************************************************************************
-	  OSATZEKO - PARA COMPLETAR
-	 ****************************************************************************************/
+__device__ double word_distance_device(float *word1, float *word2, int dim) {
 	double dist_sq = 0.0;
-	for (int i = 0; i < EMB_SIZE; i++) {
+	for (int i = 0; i < dim; i++) {
 		double diff = (double)word1[i] - (double)word2[i];
 		dist_sq += diff * diff;
 	}
@@ -323,90 +319,88 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 }
 
 
-double cluster_homogeneity(float *words, struct clusterinfo *members, int i, int numclusters, int number)
-{
-	/****************************************************************************************
-	  OSATZEKO - PARA COMPLETAR
-	  Kideen arteko distantzien batezbestekoa - Media de las distancias entre los elementos del cluster
-	  Cluster bakoitzean, hitz bikote guztien arteko distantziak - En cada cluster, las distancias entre todos los pares de elementos
-	  Adi, i-j neurtuta, ez da gero j-i neurtu behar  / Ojo, una vez calculado el par i-j no hay que calcular el j-i
-	 ****************************************************************************************/
-	double disbat = 0.0;
-	for (int k = 0; k < number; k++) {
-		int word1_index = members[i].elements[k];
-		float *word1 = &words[word1_index * EMB_SIZE];
+__global__ void cluster_homogeneity_kernel(float *words, struct clusterinfo *d_members, double *d_results) {
+	int cluster_idx = blockIdx.x;
+	int num_elements = d_members[cluster_idx].number;
 
-		for (int l = k + 1; l < number; l++) {
-			int word2_index = members[i].elements[l];
-			float *word2 = &words[word2_index * EMB_SIZE];
+	if (num_elements < 2) {
+		if (threadIdx.x == 0) d_results[cluster_idx] = 0.0;
+		return;
+	}
 
-			disbat += word_distance(word1, word2);
+	__shared__ double s_sum;
+	if (threadIdx.x == 0) s_sum = 0.0;
+	__syncthreads();
+
+	double local_sum = 0.0;
+
+	for (int k = threadIdx.x; k < num_elements; k += blockDim.x) {
+		float *w1 = &words[d_members[cluster_idx].elements[k] * EMB_SIZE];
+		for (int l = k + 1; l < num_elements; l++) {
+			float *w2 = &words[d_members[cluster_idx].elements[l] * EMB_SIZE];
+			local_sum += word_distance_device(w1, w2, EMB_SIZE);
 		}
 	}
-	return disbat;
+
+	atomicAdd(&s_sum, local_sum);
+	__syncthreads();
+
+	if (threadIdx.x == 0) {
+		long long num_pairs = (long long)num_elements * (num_elements - 1) / 2;
+		d_results[cluster_idx] = s_sum / (double)num_pairs;
+	}
 }
 
-double centroid_homogeneity(float *centroids, int i, int numclusters)
-{
-	/****************************************************************************************
-	  OSATZEKO - PARA COMPLETAR
-	 ****************************************************************************************/
-	double disbat = 0.0;
-	float *centroid_i = &centroids[i * EMB_SIZE];
-	for (int j = 0; j < numclusters; j++) {
-		if (i != j) {
-			float *centroid_j = &centroids[j * EMB_SIZE];
-			disbat += word_distance(centroid_i, centroid_j);
+__global__ void centroid_homogeneity_kernel(float *centroids, double *d_results, int numclusters) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < numclusters) {
+		double disbat = 0.0;
+		float *centroid_i = &centroids[i * EMB_SIZE];
+		for (int j = 0; j < numclusters; j++) {
+			if (i != j) {
+				disbat += word_distance_device(centroid_i, &centroids[j * EMB_SIZE], EMB_SIZE);
+			}
 		}
+		d_results[i] = disbat / (numclusters - 1);
 	}
-	return disbat;
 }
 
+double validation_paraleloan(float *words, struct clusterinfo *members, float *centroids, int numclusters, int numwords) {
+	float *d_words, *d_centroids;
+	struct clusterinfo *d_members;
+	double *d_clust_homog, *d_cent_homog;
+	double h_clust_homog[numclusters], h_cent_homog[numclusters];
+	double cvi = 0.0;
 
-double validation (float *words, struct clusterinfo *members, float *centroids, int numclusters)
-{
-	int     i, number;
-	float   cent_homog[numclusters];
-	double  disbat, max, cvi;
-	float   clust_homog[numclusters];	// multzo bakoitzeko trinkotasuna -- homogeneidad de cada cluster
+	cudaMalloc(&d_words, numwords * EMB_SIZE * sizeof(float));
+	cudaMalloc(&d_centroids, numclusters * EMB_SIZE * sizeof(float));
+	cudaMalloc(&d_members, numclusters * sizeof(struct clusterinfo));
+	cudaMalloc(&d_clust_homog, numclusters * sizeof(double));
+	cudaMalloc(&d_cent_homog, numclusters * sizeof(double));
 
+	cudaMemcpy(d_words, words, numwords * EMB_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_centroids, centroids, numclusters * EMB_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_members, members, numclusters * sizeof(struct clusterinfo), cudaMemcpyHostToDevice);
 
-	// Kalkulatu clusterren trinkotasuna -- Calcular la homogeneidad de los clusters
-	// Cluster bakoitzean, hitz bikote guztien arteko distantzien batezbestekoa. Adi, i - j neurtuta, ez da gero j - i neurtu behar
-	// En cada cluster las distancias entre todos los pares de palabras. Ojo, una vez calculado i - j, no hay que calcular el j - i
+	cluster_homogeneity_kernel<<<numclusters, 256>>>(d_words, d_members, d_clust_homog);
 
-	for (i=0; i<numclusters; i++)
-	{
-		disbat = 0.0;
-		number = members[i].number; 
-		if (number > 1)     // min 2 members in the cluster
-		{
-			disbat = cluster_homogeneity(words, members, i, numclusters, number);
-			clust_homog[i] = disbat/(number*(number-1)/2);	// zati bikote kopurua -- div num de parejas
-		}
-		else clust_homog[i] = 0;
+	int blkop = 64;
+	int bltam = (numclusters + blkop - 1) / blkop;
+	centroid_homogeneity_kernel<<<bltam, blkop>>>(d_centroids, d_cent_homog, numclusters);
 
+	cudaMemcpy(h_clust_homog, d_clust_homog, numclusters * sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_cent_homog, d_cent_homog, numclusters * sizeof(double), cudaMemcpyDeviceToHost);
 
-		// Kalkulatu zentroideen trinkotasuna -- Calcular la homogeneidad de los centroides
-		// clusterreko zentroidetik gainerako zentroideetarako batez besteko distantzia 
-		// dist. media del centroide del cluster al resto de centroides
-
-		disbat = centroid_homogeneity(centroids, i, numclusters);
-		cent_homog[i] = disbat / (numclusters-1);	// 5 multzo badira, 4 distantzia batu dira -- si son 5 clusters, se han sumado 4 dist.
+	for (int i = 0; i < numclusters; i++) {
+		double max_val = fmax(h_cent_homog[i], h_clust_homog[i]);
+		if (max_val > 0) cvi += (h_cent_homog[i] - h_clust_homog[i]) / max_val;
 	}
 
-	// cvi index
-	/****************************************************************************************
-	  OSATZEKO - PARA COMPLETAR
-fmaxf: max of 2 floats --> maximoa kalkulatzeko -- para calcular el máximo
-	 ****************************************************************************************/
-	cvi = 0.0;
-	for(int i=0; i<numclusters;i++){
-		max=fmax(cent_homog[i], clust_homog[i]);
-		cvi +=(cent_homog[i] - clust_homog[i])/max;
-	}
-	cvi=cvi/numclusters;
-	return (cvi);
+	cudaFree(d_words); cudaFree(d_centroids); cudaFree(d_members);
+	cudaFree(d_clust_homog); cudaFree(d_cent_homog);
+
+	return (cvi / numclusters);
 }
 
 
@@ -520,7 +514,7 @@ int main(int argc, char *argv[])
 		  if (cvi appropriate) end classification;
 		  else  continue classification;	
 		 ****************************************************************************************/
-		cvi = validation(words, members, centroids, numclusters);
+		cvi = validation_paraleloan(words, members, centroids, numclusters, numwords);
 		printf("cvi = %f eta numclusters = %d\n", cvi, numclusters);
 
 		dif = cvi - cvi_zaharra;
