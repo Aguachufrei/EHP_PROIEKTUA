@@ -58,11 +58,11 @@ float cosine_similarity(float* vec1, float* vec2, int dim) {
 
 //global funtzioak void motakoak dira eta ezin dute balioak itzuli, hau keneletik deitu daiteke eta ez da memcpy behar teorian.
 __device__ float cosine_similarity_device(float *a, float *b, float norm_a, float norm_b, int dim) {
-    float dot = 0.0;
-    for (int i = 0; i < dim; i++) {
-        dot += a[i] * b[i];
-    }
-    return dot / (norm_a * norm_b);
+	float dot = 0.0;
+	for (int i = 0; i < dim; i++) {
+		dot += a[i] * b[i];
+	}
+	return dot / (norm_a * norm_b);
 }
 
 // Distantzia euklidearra: bi hitzen kenketa ber bi, eta atera erro karratua
@@ -121,6 +121,71 @@ void update_centroids(float *words, float *centroids, int *wordcent, int numword
 	}
 }
 
+//zentroideak eta clusterraren tamainak hasieratu
+__global__ void reset_centroids_kernel(float *centroids, int *cluster_sizes, int numclusters, int dim) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < numclusters) {
+		cluster_sizes[idx] = 0;
+		for (int j = 0; j < dim; j++) {
+			centroids[idx * dim + j] = 0.0f;
+		}
+	}
+}
+
+__global__ void centroid_kernel(float *words, float *centroids, int *wordcent, 
+		int *cluster_sizes, int numwords, int dim) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= numwords)return;
+	int cluster = wordcent[idx];
+	atomicAdd(&cluster_sizes[cluster], 1);
+	for (int i = 0; i < dim; i++) {
+		atomicAdd(&centroids[cluster * dim + i], words[idx * dim + i]);
+	}
+}
+
+__global__ void normalice_kernel(float *centroids, int *cluster_sizes, int numclusters, int dim) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < numclusters && cluster_sizes[idx] > 0) {
+		for (int i = 0; i < dim; i++) {
+			centroids[idx * dim + i] /= cluster_sizes[idx];
+		}
+	}
+}
+
+
+
+void update_centroids_host(float *words, float *centroids, int *wordcent, int numwords, int numclusters, int dim, int *cluster_sizes) {
+	float *d_words, *d_centroids;
+	int *d_wordcent, *d_cluster_sizes;
+
+	cudaMalloc(&d_words, numwords * dim * sizeof(float));
+	cudaMalloc(&d_centroids, numclusters * dim * sizeof(float));
+	cudaMalloc(&d_wordcent, numwords * sizeof(int));
+	cudaMalloc(&d_cluster_sizes, numclusters * sizeof(int));
+
+	cudaMemcpy(d_words, words, numwords * dim * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_wordcent, wordcent, numwords * sizeof(int), cudaMemcpyHostToDevice);
+
+	int bltam = 256;
+	int blKopClusters = (numclusters + bltam - 1) / bltam;
+	int blKopWords = (numwords + bltam - 1) / bltam;
+
+	reset_centroids_kernel<<<blKopClusters, bltam>>>(d_centroids, d_cluster_sizes, numclusters, dim);
+
+	centroid_kernel<<<blKopWords, bltam>>>(d_words, d_centroids, d_wordcent, d_cluster_sizes, numwords, dim);
+
+	normalice_kernel<<<blKopClusters, bltam>>>(d_centroids, d_cluster_sizes, numclusters, dim);
+
+	//cudaDeviceSynchronize();
+
+	cudaMemcpy(centroids, d_centroids, numclusters * dim * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(cluster_sizes, d_cluster_sizes, numclusters * sizeof(int), cudaMemcpyDeviceToHost);
+
+	cudaFree(d_words);
+	cudaFree(d_centroids);
+	cudaFree(d_wordcent);
+	cudaFree(d_cluster_sizes);
+}
 
 // K-Means funtzio nagusia -- Función principal de K-Means
 void k_means_calculate(float *words, int numwords, int dim, int numclusters, int *wordcent, float *centroids, int *changed) 
@@ -159,44 +224,44 @@ void k_means_calculate(float *words, int numwords, int dim, int numclusters, int
 
 
 __global__ void k_means_calculate_kernel(
-    float *words,
-    int numwords,
-    int dim,
-    int numclusters,
-    float *centroids,
-    float *norm_words,
-    float *norm_centroids,
-    int *wordcent,
-    int *changed)
+		float *words,
+		int numwords,
+		int dim,
+		int numclusters,
+		float *centroids,
+		float *norm_words,
+		float *norm_centroids,
+		int *wordcent,
+		int *changed)
 {
-    extern __shared__ float shared_centroids[]; // dim * numclusters
+	extern __shared__ float shared_centroids[]; // dim * numclusters
 
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    for (int i = threadIdx.x; i < numclusters * dim; i += blockDim.x) {
-        shared_centroids[i] = centroids[i];
-    }
-    __syncthreads();
+	for (int i = threadIdx.x; i < numclusters * dim; i += blockDim.x) {
+		shared_centroids[i] = centroids[i];
+	}
+	__syncthreads();
 
-    if (idx < numwords) {
-        float *word_vec = &words[idx * dim];
-        float max_similarity = -1.0;
-        int closest = -1;
+	if (idx < numwords) {
+		float *word_vec = &words[idx * dim];
+		float max_similarity = -1.0;
+		int closest = -1;
 
-        for (int i = 0; i < numclusters; i++) {
-            float *cent_vec = &shared_centroids[i * dim];
-            float sim = cosine_similarity_device(word_vec, cent_vec, norm_words[idx], norm_centroids[i], dim);
-            if (sim > max_similarity) {
-                max_similarity = sim;
-                closest = i;
-            }
-        }
+		for (int i = 0; i < numclusters; i++) {
+			float *cent_vec = &shared_centroids[i * dim];
+			float sim = cosine_similarity_device(word_vec, cent_vec, norm_words[idx], norm_centroids[i], dim);
+			if (sim > max_similarity) {
+				max_similarity = sim;
+				closest = i;
+			}
+		}
 
-        if (wordcent[idx] != closest) {
-            wordcent[idx] = closest;
-            atomicOr(changed, 1);
-        }
-    }
+		if (wordcent[idx] != closest) {
+			wordcent[idx] = closest;
+			atomicOr(changed, 1);
+		}
+	}
 }
 
 
@@ -222,15 +287,15 @@ void k_means_calculate_host(float *words, int numwords, int dim, int numclusters
 	for (int i = 0; i < numwords; i++) {
 		float sum = 0;
 		for (int j = 0; j < dim; j++) sum += words[i*dim + j] * words[i*dim + j];
-			pre_words[i] = sqrtf(sum);
+		pre_words[i] = sqrtf(sum);
 	}
 
 	for (int i = 0; i < numclusters; i++) {
 		float sum = 0;
 		for (int j = 0; j < dim; j++) sum += centroids[i*dim + j] * centroids[i*dim + j];
-			pre_centroids[i] = sqrtf(sum);
+		pre_centroids[i] = sqrtf(sum);
 	}
-	
+
 	cudaMemcpy(d_pre_words, pre_words, numwords * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_pre_centroids, pre_centroids, numclusters * sizeof(float), cudaMemcpyHostToDevice);
 
@@ -430,6 +495,8 @@ int main(int argc, char *argv[])
 			  deitu k_means_calculate funtzioari -- llamar a la función k_means_calculate
 			 ****************************************************************************************/
 			k_means_calculate_host(words, numwords, EMB_SIZE, numclusters, wordcent, centroids, &changed);
+			//Paraleloan motelago egiten da
+			//update_centroids_host(words, centroids, wordcent, numwords, numclusters, EMB_SIZE, cluster_sizes);
 			update_centroids(words, centroids, wordcent, numwords, numclusters, EMB_SIZE, cluster_sizes);
 		}  
 
